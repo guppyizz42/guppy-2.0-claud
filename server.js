@@ -17,18 +17,19 @@ io.on('connection', (socket) => {
 
     // 1. Initial Authentication
     socket.on('authenticate', (data) => {
+        // Clear any ghost sessions for this socket
         users = users.filter(u => u.id !== socket.id); 
         users.push({ 
             id: socket.id, 
             peerId: data.peerId, 
             status: 'idle', 
             partner: null,
-            mode: null 
+            mode: null  
         });
         io.emit('update-count', users.length);
     });
 
-    // 2. Matching — designates one side as offerer to prevent signaling collision
+    // 2. THE THREE-OPTION MATCHING ENGINE
     socket.on('find-match', (data) => {
         const user = users.find(u => u.id === socket.id);
         if (!user) return;
@@ -36,10 +37,11 @@ io.on('connection', (socket) => {
         user.status = 'searching';
         user.mode = data.mode; // 'text', 'voice', or 'video'
 
+        // FIND PARTNER IN THE SAME MODE ONLY
         let partner = users.find(p => 
             p.id !== socket.id && 
             p.status === 'searching' && 
-            p.mode === user.mode
+            p.mode === user.mode // This separates Text, Voice, and Video queues
         );
 
         if (partner) {
@@ -47,21 +49,23 @@ io.on('connection', (socket) => {
             user.partner = partner.id;
             partner.partner = user.id;
 
-            // One side is offerer, one is answerer — prevents double-offer collision
+            // Notify both sides. Offerer/Answerer logic prevents WebRTC collisions.
             io.to(user.id).emit('match-found', { 
                 peerId: partner.peerId, 
                 mode: user.mode,
-                isOfferer: true
+                isOfferer: true 
             });
             io.to(partner.id).emit('match-found', { 
                 peerId: user.peerId, 
                 mode: partner.mode,
-                isOfferer: false
+                isOfferer: false 
             });
+            
+            console.log(`Match success: [${user.mode}] ${user.id} <-> ${partner.id}`);
         }
     });
 
-    // 3. Text Messaging
+    // 3. SECURE RELAY (Messaging & Signaling)
     socket.on('send-msg', (msg) => {
         const u = users.find(u => u.id === socket.id);
         if (u && u.partner) {
@@ -69,7 +73,6 @@ io.on('connection', (socket) => {
         }
     });
 
-    // 4. WebRTC Signaling
     socket.on('webrtc-signal', (data) => {
         const u = users.find(u => u.id === socket.id);
         if (u && u.partner) {
@@ -77,16 +80,20 @@ io.on('connection', (socket) => {
         }
     });
 
-    // 5. Video Call Ring (text and voice modes only)
+    // 4. VIDEO CALL RING (For Text & Voice modes)
     socket.on('video-ring', () => {
         const u = users.find(usr => usr.id === socket.id);
-        if (u && u.partner) io.to(u.partner).emit('video-ring');
+        if (u && u.partner) {
+            // Signal the partner that a call is incoming
+            io.to(u.partner).emit('video-ring');
+            console.log(`Video ring sent from ${socket.id} to ${u.partner}`);
+        }
     });
 
     socket.on('video-accepted', () => {
         const u = users.find(usr => usr.id === socket.id);
         if (u && u.partner) {
-            // Caller (who rang) becomes offerer, acceptor answers
+            // acceptor becomes Answerer, original ringer becomes Offerer
             io.to(u.partner).emit('video-call-start', { isOfferer: true });
             io.to(u.id).emit('video-call-start', { isOfferer: false });
         }
@@ -97,7 +104,7 @@ io.on('connection', (socket) => {
         if (u && u.partner) io.to(u.partner).emit('video-declined');
     });
 
-    // 6. Disconnect / Skip
+    // 5. DISCONNECT / SKIP HANDLER
     const handleDisconnect = () => {
         const idx = users.findIndex(u => u.id === socket.id);
         if (idx !== -1) {
@@ -112,6 +119,7 @@ io.on('connection', (socket) => {
             }
             users.splice(idx, 1);
             io.emit('update-count', users.length);
+            console.log('Node disconnected:', socket.id);
         }
     };
 
@@ -121,5 +129,5 @@ io.on('connection', (socket) => {
 
 const PORT = process.env.PORT || 3000;
 server.listen(PORT, '0.0.0.0', () => {
-    console.log(`GUPPY Mesh active on port ${PORT}`);
+    console.log(`GUPPY Mesh Server active on port ${PORT}`);
 });
