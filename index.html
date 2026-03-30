@@ -1,0 +1,92 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>GUPPY | Anonymous Mesh</title>
+    <link rel="stylesheet" href="style.css">
+    
+    <script src="/socket.io/socket.io.js"></script>
+    <script src="https://unpkg.com/peerjs@1.5.2/dist/peerjs.min.js"></script>
+</head>
+<body>
+
+<svg style="display:none;">
+  <filter id="fractal-warp">
+    <feTurbulence id="turbulence" type="fractalNoise" baseFrequency="0.01" numOctaves="5" seed="1" />
+    <feDisplacementMap in="SourceGraphic" scale="100" />
+  </filter>
+</svg>
+
+<div id="void-container">
+    <div id="void-tunnel"></div>
+    <div id="void-text-overlay"></div>
+</div>
+
+<div id="app">
+    <div class="sidebar">
+        <h2 style="letter-spacing: -2px;">🐟 GUPPY</h2>
+        <div class="status-bar">
+            <span>ONLINE:  <span id="count">0</span></span>
+            <div class="voice-visualizer">
+                <div class="wave-bar"></div>
+                <div class="wave-bar"></div>
+                <div class="wave-bar"></div>
+            </div>
+        </div>
+        <p id="voice-state-label" style="font-size:9px; color:#555; margin-top: -10px;">⚪</p>
+
+        <input type="text" id="tags" placeholder="Interests (comma separated)...">
+        
+        <div id="start-controls" style="display:flex; flex-direction:column; gap:5px;">
+            <button class="btn btn-blue" onclick="window.joinQueue('text')">Text</button>
+            <button class="btn btn-blue" onclick="window.joinQueue('voice')">Voice</button>
+            <button class="btn btn-blue" onclick="window.joinQueue('video')">Video</button>
+        </div>
+
+        <div class="portal-controls" style="margin-top:20px; display:flex; flex-direction:column; gap:8px;">
+            <button class="btn btn-dark" onclick="window.toggleVoid()">🌀 </button>
+            <button class="btn btn-dark" onclick="window.toggleEgo()">👁️ </button>
+            <button class="btn btn-dark" onclick="window.toggleGame()">🎮 </button>
+        </div>
+
+        <div id="active-controls" style="display:none; margin-top:auto; flex-direction:column; gap:5px;">
+            <button class="btn btn-blue" id="video-call-btn" onclick="window.requestVideo()">📹 Video Call</button>
+            <button class="btn" id="mute-btn" onclick="window.toggleMute()">🔇 Mute</button>
+            <button class="btn btn-red" onclick="window.handleSkip()">SKIP!(ESC)</button>
+        </div>
+    </div>
+
+    <div class="chat-area" id="chat-viewport">
+        <div id="messages">
+            <div class="system">אללהו אכבר420אללהו אכבר420</div>
+        </div>
+        
+        <div class="input-box">
+            <input type="text" id="chat-input" placeholder="Transmit message..." disabled onkeypress="if(event.key==='Enter') window.sendMessage()">
+            <button class="btn" onclick="window.sendMessage()">SEND</button>
+        </div>
+    </div>
+</div>
+
+<div id="call-overlay" style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.8); z-index:100; justify-content:center; align-items:center;">
+    <div class="call-card" style="background:#222; padding:30px; border:1px solid #39ff14; text-align:center; color:white;">
+        <h3>📹 Incoming Video call...</h3>
+        <p>Stranger wants to start video.</p>
+        <div class="call-btns" style="display:flex; gap:10px; margin-top:20px; justify-content:center;">
+            <button class="btn btn-blue" onclick="window.acceptCall()">OHH YESS!</button>
+            <button class="btn btn-red" onclick="window.denyCall()">NAAAH!</button>
+        </div>
+    </div>
+</div>
+
+<audio id="remote-audio" autoplay playsinline></audio>
+
+<script src="client.js"></script>
+<script src="void.js"></script>
+<script src="voice.js"></script>
+<script src="ego.js"></script>
+<script src="arcade.js"></script>
+
+</body>
+</html>
