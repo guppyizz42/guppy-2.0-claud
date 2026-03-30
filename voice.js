@@ -1,128 +1,92 @@
 /**
- * GUPPY | MEDIA ENGINE v5.0
- *
- * Text mode  — no auto media. Video call button rings stranger, they accept/decline.
- * Voice mode — audio auto-starts on match. Video call button upgrades to video.
- * Video mode — audio+video auto-starts on match. No video call button shown.
- *
- * window.isOfferer (set by server via client.js) controls who sends the offer.
- * This prevents the double-offer collision that silently kills audio.
+ * GUPPY | MEDIA ENGINE v5.1 (STABLE)
+ * Instant Video for Video Nodes | Independent Voice Routing.
  */
 
 let localStream = null;
 let peerConnection = null;
 let isMuted = false;
-let isRinging = false; // prevents double-tap on video call button
 
 const iceConfig = {
     iceServers: [{ urls: 'stun:stun.l.google.com:19302' }]
 };
 
-// ─────────────────────────────────────────────
-// START MEDIA
-// Called by client.js on match (voice/video)
-// or by video-call-start event (text/voice upgrade)
-// ─────────────────────────────────────────────
+// --- HANDSHAKE LOGIC (For Text/Voice Nodes) ---
+window.requestVideo = () => {
+    window.socket.emit('video-request');
+    if (window.addMessage) window.addMessage("SYSTEM: Video request sent...", "system");
+};
 
+window.acceptCall = () => {
+    const overlay = document.getElementById('call-overlay');
+    if (overlay) overlay.style.display = 'none';
+    window.startMedia(true); 
+    window.socket.emit('video-accepted');
+};
+
+// --- 1. START MEDIA ---
 window.startMedia = async function(useVideo = false) {
     try {
-        // Clean up any existing stream
-        if (localStream) {
-            localStream.getTracks().forEach(t => t.stop());
-            localStream = null;
-        }
+        if (localStream) localStream.getTracks().forEach(t => t.stop());
 
-        localStream = await navigator.mediaDevices.getUserMedia({
-            audio: true,
-            video: useVideo ? { width: 1280, height: 720 } : false
+        // M1 Optimized constraints
+        localStream = await navigator.mediaDevices.getUserMedia({ 
+            audio: true, 
+            video: useVideo ? { width: 1280, height: 720, facingMode: "user" } : false 
         });
 
         updateVoiceUI(useVideo ? '🟢 VIDEO_ACTIVE' : '🎙️ VOICE_ACTIVE');
         if (useVideo) showLocalPreview(localStream);
 
-        // Close old peer connection (e.g. upgrading voice → video)
-        if (peerConnection) {
-            peerConnection.close();
-            peerConnection = null;
-        }
+        if (peerConnection) peerConnection.close();
+        createPeerConnection(useVideo);
 
-        createPeerConnection();
-
-        // addTrack() implicitly creates transceivers.
-        // Do NOT also call addTransceiver() — that doubles the m= lines in SDP.
+        // Add tracks to connection
         localStream.getTracks().forEach(track => {
             peerConnection.addTrack(track, localStream);
         });
 
-        // Only the designated offerer sends the offer.
-        // The answerer waits for the offer via webrtc-signal.
-        if (window.isOfferer) {
-            const offer = await peerConnection.createOffer();
-            await peerConnection.setLocalDescription(offer);
-            window.socket.emit('webrtc-signal', {
-                type: 'offer',
-                sdp: offer,
-                useVideo
-            });
-        }
+        // Negotiate with specific intent
+        const offer = await peerConnection.createOffer({
+            offerToReceiveAudio: true,
+            offerToReceiveVideo: useVideo 
+        });
+        await peerConnection.setLocalDescription(offer);
+        
+        window.socket.emit('webrtc-signal', { 
+            type: 'offer', 
+            sdp: offer, 
+            useVideo: useVideo 
+        });
 
     } catch (err) {
-        console.error('Media Error:', err);
+        console.error("Hardware Error:", err);
         updateVoiceUI('❌ HARDWARE_ERROR');
-        isRinging = false;
     }
 };
 
-// ─────────────────────────────────────────────
-// VIDEO CALL BUTTON (text & voice modes)
-// Sends a ring to the stranger
-// ─────────────────────────────────────────────
-
-window.requestVideo = function() {
-    if (isRinging) return;
-    isRinging = true;
-    window.socket.emit('video-ring');
-    updateVoiceUI('📞 RINGING...');
-    if (window.addMessage) window.addMessage('Waiting for stranger to accept video call...', 'system');
-};
-
-// ─────────────────────────────────────────────
-// ACCEPT / DECLINE (stranger's side)
-// ─────────────────────────────────────────────
-
-window.acceptCall = function() {
-    const overlay = document.getElementById('call-overlay');
-    if (overlay) overlay.style.display = 'none';
-    // Tell server we accepted — server will send video-call-start to both sides
-    // with correct isOfferer values. startMedia() fires from client.js handler.
-    window.socket.emit('video-accepted');
-};
-
-window.denyCall = function() {
-    const overlay = document.getElementById('call-overlay');
-    if (overlay) overlay.style.display = 'none';
-    window.socket.emit('video-declined');
-};
-
-// ─────────────────────────────────────────────
-// PEER CONNECTION — no addTransceiver calls
-// ─────────────────────────────────────────────
-
-function createPeerConnection() {
+// --- 2. CREATE PEER CONNECTION ---
+function createPeerConnection(useVideo) {
     peerConnection = new RTCPeerConnection(iceConfig);
+
+    // FIX: Pre-configure transceivers so Voice Node doesn't wait for Video sync
+    peerConnection.addTransceiver('audio', { direction: 'sendrecv' });
+    if (useVideo) {
+        peerConnection.addTransceiver('video', { direction: 'sendrecv' });
+    }
 
     peerConnection.ontrack = (event) => {
         const stream = event.streams[0];
         const remoteAudio = document.getElementById('remote-audio');
 
+        // ROUTE AUDIO (Priority 1)
         if (remoteAudio) {
             remoteAudio.srcObject = stream;
-            remoteAudio.play().catch(err => {
-                console.warn('Autoplay blocked:', err);
-                updateVoiceUI('⚠️ CLICK TO UNMUTE');
-            });
+            // Spiritual Vibe: Auto-resume audio context
+            remoteAudio.play().catch(() => console.log("Click UI to hear stranger."));
         }
 
+        // ROUTE VIDEO (Only if track exists)
         if (event.track.kind === 'video') {
             displayRemoteVideo(stream);
         }
@@ -135,108 +99,46 @@ function createPeerConnection() {
             window.socket.emit('webrtc-signal', { type: 'ice', candidate: event.candidate });
         }
     };
-
-    peerConnection.onconnectionstatechange = () => {
-        const state = peerConnection.connectionState;
-        if (state === 'disconnected' || state === 'failed') {
-            window.stopMedia();
-        }
-    };
 }
 
-// ─────────────────────────────────────────────
-// SIGNALING HANDLER
-// ─────────────────────────────────────────────
+// --- 3. SIGNALING HANDLER ---
+if (window.socket) {
+    window.socket.on('webrtc-signal', async (data) => {
+        try {
+            if (!peerConnection) createPeerConnection(data.useVideo);
 
-window.socket.on('webrtc-signal', async (data) => {
-    try {
-        if (!peerConnection) createPeerConnection();
+            if (data.type === 'offer') {
+                await peerConnection.setRemoteDescription(new RTCSessionDescription(data.sdp));
+                
+                if (!localStream) {
+                    localStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: data.useVideo });
+                    localStream.getTracks().forEach(track => peerConnection.addTrack(track, localStream));
+                    if (data.useVideo) showLocalPreview(localStream);
+                }
 
-        if (data.type === 'offer') {
-            await peerConnection.setRemoteDescription(
-                new RTCSessionDescription(data.sdp)
-            );
+                const answer = await peerConnection.createAnswer();
+                await peerConnection.setLocalDescription(answer);
+                window.socket.emit('webrtc-signal', { type: 'answer', sdp: answer });
 
-            // Answerer gets their own media if not already running
-            if (!localStream) {
-                localStream = await navigator.mediaDevices.getUserMedia({
-                    audio: true,
-                    video: data.useVideo ? { width: 1280, height: 720 } : false
-                });
-                localStream.getTracks().forEach(track => {
-                    peerConnection.addTrack(track, localStream);
-                });
-                if (data.useVideo) showLocalPreview(localStream);
-                updateVoiceUI(data.useVideo ? '🟢 VIDEO_ACTIVE' : '🎙️ VOICE_ACTIVE');
+            } else if (data.type === 'answer') {
+                await peerConnection.setRemoteDescription(new RTCSessionDescription(data.sdp));
+            } else if (data.type === 'ice') {
+                await peerConnection.addIceCandidate(new RTCIceCandidate(data.candidate));
             }
+        } catch (e) { console.warn(e); }
+    });
+}
 
-            const answer = await peerConnection.createAnswer();
-            await peerConnection.setLocalDescription(answer);
-            window.socket.emit('webrtc-signal', { type: 'answer', sdp: answer });
-            isRinging = false;
-
-        } else if (data.type === 'answer') {
-            await peerConnection.setRemoteDescription(
-                new RTCSessionDescription(data.sdp)
-            );
-            isRinging = false;
-
-        } else if (data.type === 'ice') {
-            await peerConnection.addIceCandidate(
-                new RTCIceCandidate(data.candidate)
-            );
-        }
-    } catch (e) {
-        console.warn('Signaling Error:', e);
-    }
-});
-
-// ─────────────────────────────────────────────
-// MUTE TOGGLE
-// ─────────────────────────────────────────────
-
-window.toggleMute = function() {
-    if (!localStream) return;
-    isMuted = !isMuted;
-    localStream.getAudioTracks().forEach(t => t.enabled = !isMuted);
-    const btn = document.getElementById('mute-btn');
-    if (btn) btn.innerText = isMuted ? '🔈 Unmute' : '🔇 Mute';
-};
-
-// ─────────────────────────────────────────────
-// CLEANUP
-// ─────────────────────────────────────────────
-
-window.stopMedia = function() {
-    if (localStream) localStream.getTracks().forEach(t => t.stop());
-    if (peerConnection) peerConnection.close();
-
-    const rv = document.getElementById('remote-video');
-    const lv = document.getElementById('local-video-preview');
-    if (rv) rv.remove();
-    if (lv) lv.remove();
-
-    localStream = null;
-    peerConnection = null;
-    isMuted = false;
-    isRinging = false;
-
-    updateVoiceUI('⚪ OFFLINE');
-    stopWaveAnimation();
-};
-
-// ─────────────────────────────────────────────
-// UI HELPERS
-// ─────────────────────────────────────────────
-
+// --- VISUAL UTILITIES ---
 function displayRemoteVideo(stream) {
     let rv = document.getElementById('remote-video');
     if (!rv) {
         rv = document.createElement('video');
         rv.id = 'remote-video';
         rv.autoplay = true;
-        rv.playsinline = true;
-        document.querySelector('.chat-area').appendChild(rv);
+        rv.playsinline = true; 
+        const viewport = document.querySelector('.chat-area');
+        if (viewport) viewport.appendChild(rv);
     }
     rv.srcObject = stream;
 }
@@ -246,25 +148,37 @@ function showLocalPreview(stream) {
     if (!lv) {
         lv = document.createElement('video');
         lv.id = 'local-video-preview';
-        lv.autoplay = true;
-        lv.muted = true; // always muted to prevent feedback
-        lv.playsinline = true;
-        document.querySelector('.sidebar').appendChild(lv);
+        lv.autoplay = true; lv.muted = true; lv.playsinline = true;
+        const sidebar = document.querySelector('.sidebar');
+        if (sidebar) sidebar.appendChild(lv);
     }
     lv.srcObject = stream;
+}
+
+window.stopMedia = function() {
+    if (localStream) localStream.getTracks().forEach(t => t.stop());
+    if (peerConnection) peerConnection.close();
+    const rv = document.getElementById('remote-video');
+    const lv = document.getElementById('local-video-preview');
+    if (rv) rv.remove(); if (lv) lv.remove();
+    localStream = null; peerConnection = null;
+    updateVoiceUI('⚪ OFFLINE');
+    stopWaveAnimation();
+};
+
+function toggleMute() {
+    if (!localStream) return;
+    isMuted = !isMuted;
+    localStream.getAudioTracks().forEach(t => t.enabled = !isMuted);
 }
 
 function updateVoiceUI(txt) {
     const label = document.getElementById('voice-state-label');
     if (label) label.innerText = txt;
 }
-
-function startWaveAnimation() {
-    document.querySelectorAll('.wave-bar').forEach(b => b.classList.add('active'));
-}
-
-function stopWaveAnimation() {
-    document.querySelectorAll('.wave-bar').forEach(b => b.classList.remove('active'));
-}
+function startWaveAnimation() { document.querySelectorAll('.wave-bar').forEach(b => b.classList.add('active')); }
+function stopWaveAnimation() { document.querySelectorAll('.wave-bar').forEach(b => b.classList.remove('active')); }
 
 window.addEventListener('stop-all-activities', window.stopMedia);
+window.addEventListener('start-voice', () => window.startMedia(false));
+window.addEventListener('start-video', () => window.startMedia(true));
