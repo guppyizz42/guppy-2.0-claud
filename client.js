@@ -1,8 +1,8 @@
 window.socket = io();
 window.peer = new Peer();
 window.partnerPeerId = null;
-window.currentMode = 'text';  // tracked here so voice.js can read it
-window.isOfferer = false;     // set by server on match, used by voice.js
+window.currentMode = 'text';  
+window.isOfferer = false;     
 
 window.peer.on('open', (id) => window.socket.emit('authenticate', { peerId: id }));
 
@@ -12,23 +12,29 @@ window.socket.on('update-count', c => {
 });
 
 window.joinQueue = (mode) => {
+    // Vibe: Play a subtle click sound when choosing a node
+    if (window.playSound) window.playSound('click');
+    
     window.socket.emit('find-match', { mode });
+    window.currentMode = mode; // Pre-set mode for UI responsiveness
+
     const m = document.getElementById('messages');
-    if (m) m.innerHTML = '<div class="system">Searching...</div>';
+    if (m) m.innerHTML = `<div class="system">Searching for ${mode} partner...</div>`;
 
     const sc = document.getElementById('start-controls');
     const ac = document.getElementById('active-controls');
+    
     if (sc) sc.style.display = 'none';
     if (ac) {
         ac.style.display = 'flex';
-        // Hide video call button in video mode — already in video, no need
+        // UI Fix: Hide video call button if we are ALREADY in video mode
         const vcBtn = document.getElementById('video-call-btn');
         if (vcBtn) vcBtn.style.display = mode === 'video' ? 'none' : 'block';
     }
 };
 
 window.socket.on('match-found', (data) => {
-    // Stop any active plugins
+    // Clean up plugins (Rainbow Void, Ego, Arcade) to save M1 CPU for Video
     if (window.stopVoid) window.stopVoid();
     if (window.stopEgo) window.stopEgo();
     if (window.stopGame) window.stopGame();
@@ -39,44 +45,46 @@ window.socket.on('match-found', (data) => {
 
     const m = document.getElementById('messages');
     const inp = document.getElementById('chat-input');
-    if (m) m.innerHTML = '<div class="system">Connected!</div>';
+    
+    if (m) m.innerHTML = '<div class="system">Stranger connected!</div>';
     if (inp) { inp.disabled = false; inp.focus(); }
 
-    // Voice: auto-start audio. Video: auto-start audio+video.
-    // Text: do nothing until a video ring is initiated.
+    // THE CORE LOGIC:
     if (data.mode === 'voice') {
-        window.startMedia(false);
+        // Voice Node: Mic on, no camera.
+        window.startMedia(false); 
     } else if (data.mode === 'video') {
-        window.startMedia(true);
+        // Video Node: Instant Camera + Mic.
+        if (m) m.innerHTML += '<div class="system">Initializing Video Node...</div>';
+        window.startMedia(true); 
     }
 });
 
-// --- VIDEO RING FLOW ---
+// --- VIDEO RING FLOW (For Text/Voice Nodes) ---
 
-// Incoming ring — show accept prompt
 window.socket.on('video-ring', () => {
+    // Spiritual Vibe: Maybe play a low hum here?
     const overlay = document.getElementById('call-overlay');
     if (overlay) overlay.style.display = 'flex';
 });
 
-// Both sides get this after accept — isOfferer tells who makes the offer
 window.socket.on('video-call-start', (data) => {
+    const overlay = document.getElementById('call-overlay');
+    if (overlay) overlay.style.display = 'none';
+    
     window.isOfferer = data.isOfferer;
-    window.startMedia(true);
+    window.startMedia(true); // Upgrade current connection to video
 });
 
-// Caller hears decline
 window.socket.on('video-declined', () => {
-    window.isRinging = false;
     addMessage('Stranger declined the video call.', 'system');
-    // Restore voice UI state if in voice mode
     if (window.currentMode === 'voice') {
         const label = document.getElementById('voice-state-label');
         if (label) label.innerText = '🎙️ VOICE_ACTIVE';
     }
 });
 
-// --- BASIC CHAT ---
+// --- BASIC CHAT & NAVIGATION ---
 
 window.sendMessage = function() {
     const input = document.getElementById('chat-input');
@@ -87,14 +95,20 @@ window.sendMessage = function() {
     }
 };
 
-window.socket.on('receive-msg', m => addMessage(m, 'stranger'));
+window.socket.on('receive-msg', m => {
+    addMessage(m, 'stranger');
+    // Subtle vibe: play glitch sound on incoming msg
+    if (window.playSound) window.playSound('glitch');
+});
 
 window.socket.on('stranger-left', () => {
-    addMessage('Stranger left.', 'system');
+    // Death Vibe: Play death moan when partner leaves
+    if (window.playSound) window.playSound('hit');
+    
+    addMessage('Stranger disconnected.', 'system');
     setTimeout(() => location.reload(), 1500);
 });
 
-// ESC to skip
 window.addEventListener('keydown', (e) => {
     if (e.key === 'Escape') window.handleSkip();
 });
